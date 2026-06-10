@@ -1,0 +1,9 @@
+# 编译产物
+*.exe
+bin/
+
+# Qoder 工具目录
+.qoder/
+
+# Windows 临时文件
+nul

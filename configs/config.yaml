@@ -1,0 +1,12 @@
+# Gateway 服务配置
+
+server:
+  port: 8080           # HTTP监听端口
+  mode: debug          # gin运行模式: debug / release / test
+
+grpc:
+  target: "localhost:50051"  # 后端gRPC服务地址
+  timeout: 30                # 超时时间(秒)
+
+log:
+  level: "info"        # 日志级别: debug / info / warn / error

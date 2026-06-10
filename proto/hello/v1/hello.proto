@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package hello.v1;
+
+option go_package = "go-gateway/api/hello/v1;hellov1";
+
+// HelloService 示例服务，演示HTTP和WebSocket转发到gRPC
+service HelloService {
+  // SayHello Unary调用，对应HTTP POST接口
+  rpc SayHello(SayHelloRequest) returns (SayHelloResponse);
+
+  // ChatStream 双向流式调用，对应WebSocket双向通信
+  rpc ChatStream(stream ChatMessage) returns (stream ChatMessage);
+}
+
+message SayHelloRequest {
+  string name = 1;
+}
+
+message SayHelloResponse {
+  string message = 1;
+}
+
+message ChatMessage {
+  string user = 1;
+  string text = 2;
+  int64 timestamp = 3;
+}
