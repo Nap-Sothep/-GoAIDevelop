@@ -1,8 +1,8 @@
-# Gateway 服务配置
+# Gateway 服务配置 (Docker环境)
 
 server:
   port: 8080           # HTTP监听端口
-  mode: debug          # gin运行模式: debug / release / test
+  mode: release        # gin运行模式: debug / release / test
 
 grpc:
   target: "localhost:50051"  # 后端gRPC服务地址
@@ -11,18 +11,18 @@ grpc:
 log:
   level: "info"        # 日志级别: debug / info / warn / error
 
-# MongoDB 配置
+# MongoDB 配置 (Docker容器内地址)
 mongodb:
-  uri: "mongodb://localhost:27017"      # MongoDB连接字符串
+  uri: "mongodb://mongodb:27017"       # 使用Docker服务名
   database: "go_gateway_db"              # 数据库名称
   max_pool_size: 100                     # 最大连接池大小
   min_pool_size: 10                      # 最小连接池大小
   connect_timeout: 5                     # 连接超时时间(秒)
   socket_timeout: 10                     # Socket超时时间(秒)
 
-# Redis 配置
+# Redis 配置 (Docker容器内地址)
 redis:
-  addr: "localhost:6379"                 # Redis地址
+  addr: "redis:6379"                     # 使用Docker服务名
   password: ""                           # Redis密码(可选)
   db: 0                                  # Redis数据库索引
   pool_size: 50                          # 连接池大小
@@ -32,10 +32,10 @@ redis:
   read_timeout: 3                        # 读取超时时间(秒)
   write_timeout: 3                       # 写入超时时间(秒)
 
-# Kafka 配置
+# Kafka 配置 (Docker容器内地址)
 kafka:
-  brokers:                               # Kafka Broker列表
-    - "localhost:9092"
+  brokers:                               # Kafka Broker列表(使用Docker内部地址)
+    - "kafka:29092"
   producer:
     required_acks: -1                    # 确认机制: -1=等待所有副本, 1=等待Leader, 0=不确认
     retry_max: 3                         # 最大重试次数

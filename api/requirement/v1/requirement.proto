@@ -1,0 +1,257 @@
+syntax = "proto3";
+
+package requirement.v1;
+
+option go_package = "go-gateway/api/requirement/v1;requirementv1";
+
+import "google/protobuf/timestamp.proto";
+
+// ========== 需求服务 ==========
+service RequirementService {
+    // CRUD操作
+    rpc CreateRequirement(CreateRequirementRequest) returns (CreateRequirementResponse);
+    rpc GetRequirement(GetRequirementRequest) returns (GetRequirementResponse);
+    rpc UpdateRequirement(UpdateRequirementRequest) returns (UpdateRequirementResponse);
+    rpc DeleteRequirement(DeleteRequirementRequest) returns (DeleteRequirementResponse);
+    rpc ListRequirements(ListRequirementsRequest) returns (ListRequirementsResponse);
+    
+    // 关联关系
+    rpc LinkRequirements(LinkRequirementsRequest) returns (LinkRequirementsResponse);
+    rpc GetRelatedRequirements(GetRequirementRequest) returns (ListRequirementsResponse);
+    
+    // 文档管理
+    rpc UploadDocument(UploadDocumentRequest) returns (UploadDocumentResponse);
+    rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
+}
+
+// ========== 经验服务 ==========
+service ExperienceService {
+    // 经验CRUD
+    rpc CreateExperience(CreateExperienceRequest) returns (CreateExperienceResponse);
+    rpc GetExperience(GetExperienceRequest) returns (GetExperienceResponse);
+    rpc ListExperiences(ListExperiencesRequest) returns (ListExperiencesResponse);
+    
+    // 经验检索（核心功能）
+    rpc FindSimilarExperiences(FindSimilarExperiencesRequest) returns (ListExperiencesResponse);
+    
+    // 经验统计
+    rpc GetExperienceStats(GetExperienceStatsRequest) returns (GetExperienceStatsResponse);
+}
+
+// ========== 消息定义 ==========
+
+// 需求
+message Requirement {
+    string id = 1;
+    string title = 2;
+    string description = 3;
+    string priority = 4;      // high/medium/low
+    string status = 5;        // backlog/in_progress/done/cancelled
+    repeated string related_ids = 6;
+    repeated string tags = 7;
+    repeated string generated_files = 8;
+    repeated ExperienceRef experiences = 9;
+    string creator_id = 10;
+    google.protobuf.Timestamp created_at = 11;
+    google.protobuf.Timestamp updated_at = 12;
+    optional google.protobuf.Timestamp completed_at = 13;
+}
+
+// 经验引用
+message ExperienceRef {
+    string experience_id = 1;
+    string type = 2;          // problem_solution / best_practice / pitfall
+    repeated string tags = 3;
+    string summary = 4;
+}
+
+// 经验
+message Experience {
+    string id = 1;
+    string requirement_id = 2;
+    repeated string tags = 3;
+    string type = 4;          // problem_solution / best_practice / pitfall / pattern
+    string title = 5;
+    string description = 6;
+    string solution = 7;
+    string code_example = 8;
+    string file_path = 9;
+    repeated int32 line_range = 10;  // [start, end]
+    double confidence = 11;
+    int32 times_used = 12;
+    repeated string technologies = 13;
+    string category = 14;     // database / api / security / performance
+    google.protobuf.Timestamp created_at = 15;
+}
+
+// 文档
+message Document {
+    string id = 1;
+    string requirement_id = 2;
+    string file_name = 3;
+    string file_type = 4;     // doc / md / pdf
+    int64 file_size = 5;
+    string content = 6;
+    string summary = 7;
+    string uploaded_by = 8;
+    google.protobuf.Timestamp uploaded_at = 9;
+}
+
+// ========== 请求/响应定义 ==========
+
+// 创建需求
+message CreateRequirementRequest {
+    string title = 1;
+    string description = 2;
+    string priority = 3;
+    repeated string tags = 4;
+    string creator_id = 5;
+}
+
+message CreateRequirementResponse {
+    Requirement requirement = 1;
+}
+
+// 获取需求
+message GetRequirementRequest {
+    string id = 1;
+}
+
+message GetRequirementResponse {
+    Requirement requirement = 1;
+}
+
+// 更新需求
+message UpdateRequirementRequest {
+    string id = 1;
+    optional string title = 2;
+    optional string description = 3;
+    optional string priority = 4;
+    optional string status = 5;
+    repeated string tags = 6;
+}
+
+message UpdateRequirementResponse {
+    Requirement requirement = 1;
+}
+
+// 删除需求
+message DeleteRequirementRequest {
+    string id = 1;
+}
+
+message DeleteRequirementResponse {
+    bool success = 1;
+}
+
+// 列出需求
+message ListRequirementsRequest {
+    int32 page = 1;
+    int32 page_size = 2;
+    optional string status = 3;
+    optional string priority = 4;
+    repeated string tags = 5;
+}
+
+message ListRequirementsResponse {
+    repeated Requirement requirements = 1;
+    int64 total = 2;
+}
+
+// 关联需求
+message LinkRequirementsRequest {
+    string from_requirement_id = 1;
+    string to_requirement_id = 2;
+    string relation_type = 3;  // blocks / blocked_by / relates_to / duplicates
+}
+
+message LinkRequirementsResponse {
+    bool success = 1;
+}
+
+// 上传文档
+message UploadDocumentRequest {
+    string requirement_id = 1;
+    string file_name = 2;
+    string file_type = 3;     // doc / md / pdf
+    bytes file_content = 4;   // 文件二进制内容
+    string uploaded_by = 5;
+}
+
+message UploadDocumentResponse {
+    Document document = 1;
+}
+
+// 获取文档
+message GetDocumentRequest {
+    string id = 1;
+}
+
+message GetDocumentResponse {
+    Document document = 1;
+}
+
+// 创建经验
+message CreateExperienceRequest {
+    string requirement_id = 1;
+    repeated string tags = 2;
+    string type = 3;          // problem_solution / best_practice / pitfall / pattern
+    string title = 4;
+    string description = 5;
+    string solution = 6;
+    string code_example = 7;
+    string file_path = 8;
+    repeated int32 line_range = 9;
+    repeated string technologies = 10;
+    string category = 11;     // database / api / security / performance
+}
+
+message CreateExperienceResponse {
+    Experience experience = 1;
+}
+
+// 获取经验
+message GetExperienceRequest {
+    string id = 1;
+}
+
+message GetExperienceResponse {
+    Experience experience = 1;
+}
+
+// 列出经验
+message ListExperiencesRequest {
+    int32 page = 1;
+    int32 page_size = 2;
+    optional string type = 3;
+    optional string category = 4;
+    repeated string tags = 5;
+    repeated string technologies = 6;
+}
+
+message ListExperiencesResponse {
+    repeated Experience experiences = 1;
+    int64 total = 2;
+}
+
+// 查找相似经验
+message FindSimilarExperiencesRequest {
+    repeated string tags = 1;
+    repeated string technologies = 2;
+    optional string category = 3;
+    int32 limit = 4;          // 返回数量限制，默认10
+}
+
+// 经验统计
+message GetExperienceStatsRequest {
+    // 可以添加过滤条件
+    optional string category = 1;
+    repeated string technologies = 2;
+}
+
+message GetExperienceStatsResponse {
+    int64 total_experiences = 1;
+    map<string, int64> by_type = 2;       // 按类型统计
+    map<string, int64> by_category = 3;   // 按分类统计
+    map<string, int64> by_technology = 4; // 按技术栈统计
+}

@@ -12,13 +12,14 @@ import (
 
 	hellov1 "go-gateway/api/hello/v1"
 	"go-gateway/internal/client"
+	"go-gateway/internal/middleware"
 )
 
-// wsUpgrader WebSocket升级器
+// wsUpgrader WebSocket升级器（使用默认来源检查）
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
-	CheckOrigin:     func(r *http.Request) bool { return true },
+	CheckOrigin:     middleware.CheckWebSocketOrigin(nil), // 默认允许localhost
 }
 
 // HelloWSHandler Hello服务的WebSocket处理器
@@ -28,6 +29,17 @@ type HelloWSHandler struct {
 
 // NewHelloWSHandler 创建WebSocket处理器
 func NewHelloWSHandler(c *client.HelloClient) *HelloWSHandler {
+	return &HelloWSHandler{client: c}
+}
+
+// NewHelloWSHandlerWithOrigins 创建带来源白名单的WebSocket处理器
+func NewHelloWSHandlerWithOrigins(c *client.HelloClient, allowedOrigins []string) *HelloWSHandler {
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  4096,
+		WriteBufferSize: 4096,
+		CheckOrigin:     middleware.CheckWebSocketOrigin(allowedOrigins),
+	}
+	wsUpgrader = upgrader
 	return &HelloWSHandler{client: c}
 }
 

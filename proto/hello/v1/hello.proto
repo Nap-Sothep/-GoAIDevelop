@@ -11,6 +11,9 @@ service HelloService {
 
   // ChatStream 双向流式调用，对应WebSocket双向通信
   rpc ChatStream(stream ChatMessage) returns (stream ChatMessage);
+
+  // HealthCheck 健康检查，返回各中间件状态
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }
 
 message SayHelloRequest {
@@ -25,4 +28,34 @@ message ChatMessage {
   string user = 1;
   string text = 2;
   int64 timestamp = 3;
+}
+
+// HealthCheckRequest 健康检查请求
+message HealthCheckRequest {
+  bool detailed = 1; // 是否返回详细信息
+}
+
+// HealthCheckResponse 健康检查响应
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    DEGRADED = 3; // 降级模式（部分中间件不可用）
+  }
+
+  ServingStatus status = 1;      // 服务状态
+  string version = 2;            // 服务版本
+  int64 uptime = 3;              // 运行时长(秒)
+
+  // 各中间件状态
+  ComponentStatus mongodb = 4;   // MongoDB状态
+  ComponentStatus redis = 5;     // Redis状态
+  ComponentStatus kafka = 6;     // Kafka状态
+
+  message ComponentStatus {
+    bool available = 1;          // 是否可用
+    string message = 2;          // 状态消息
+    int64 latency_ms = 3;        // 延迟(毫秒)
+  }
 }

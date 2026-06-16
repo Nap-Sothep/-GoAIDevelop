@@ -1,0 +1,367 @@
+{
+  "review_metadata": {
+    "project": "GoAIDevelop",
+    "review_date": "2026-06-16",
+    "commit_range": "d92688e (initial) to current workspace",
+    "reviewer": "API Contract Review Expert",
+    "files_reviewed": [
+      "proto/hello/v1/hello.proto",
+      "api/requirement/v1/requirement.proto",
+      "internal/handler/hello_http.go",
+      "internal/handler/hello_ws.go",
+      "internal/router/router.go"
+    ]
+  },
+  "findings": [
+    {
+      "id": "PROTO-001",
+      "category": "gRPC Protocol Definition - Backward Compatibility",
+      "severity": "HIGH",
+      "file": "proto/hello/v1/hello.proto",
+      "description": "Missing reserved field declarations in proto messages",
+      "details": "The proto files do not use 'reserved' keywords for deleted or renamed fields. If fields are removed in future versions, this could cause data corruption when old clients send data with old field numbers that get reinterpreted as new fields.",
+      "recommendation": "Add 'reserved' declarations for any fields that might be removed. Example:\nmessage SayHelloRequest {\n  reserved 2, 3; // Reserve field numbers if fields are removed\n  string name = 1;\n}",
+      "impact": "Future breaking changes without proper reserved declarations can cause silent data corruption",
+      "reference": "https://developers.google.com/protocol-buffers/docs/proto3#reserved"
+    },
+    {
+      "id": "PROTO-002",
+      "category": "gRPC Protocol Definition - Backward Compatibility",
+      "severity": "MEDIUM",
+      "file": "api/requirement/v1/requirement.proto",
+      "description": "No deprecated field markers for potential future deprecation",
+      "details": "The requirement.proto file has extensive message definitions but lacks 'deprecated' option markers on fields that might be phased out. This makes it harder to manage gradual API evolution.",
+      "recommendation": "Use 'option deprecated = true;' for fields planned for removal. Example:\nstring priority = 4 [deprecated = true]; // Use status instead",
+      "impact": "Makes API versioning and migration more difficult for consumers",
+      "reference": "https://developers.google.com/protocol-buffers/docs/proto3#field-options"
+    },
+    {
+      "id": "PROTO-003",
+      "category": "gRPC Protocol Definition - Field Number Assignment",
+      "severity": "LOW",
+      "file": "api/requirement/v1/requirement.proto",
+      "description": "Inconsistent field number assignment pattern",
+      "details": "Field numbers are assigned sequentially (1, 2, 3...) which is fine for initial development. However, there's no strategic reservation of field numbers for frequently used fields (fields 1-15 use 1 byte encoding). The Experience.message uses field 10 for line_range (repeated int32), which should ideally use a lower field number if frequently accessed.",
+      "recommendation": "Consider reserving field numbers 1-15 for most frequently used fields to optimize wire format size. For example, move 'line_range' from field 10 to a lower number if it's commonly queried.",
+      "impact": "Minor performance impact on serialization/deserialization for high-frequency fields",
+      "reference": "https://developers.google.com/protocol-buffers/docs/encoding#structure"
+    },
+    {
+      "id": "HTTP-001",
+      "category": "HTTP API Route Design",
+      "severity": "HIGH",
+      "file": "internal/router/router.go",
+      "description": "Missing HTTP method enforcement for RESTful endpoints",
+      "details": "The router defines only POST /api/v1/hello but does not include OPTIONS preflight handling at the route level. While CORS middleware handles OPTIONS globally, individual routes should explicitly define allowed methods for better API documentation and security.",
+      "recommendation": "Add explicit method restrictions or document expected HTTP methods per endpoint. Consider using gin's routing groups with method-specific handlers:\napi.POST(\"/hello\", httpHandler.SayHello)\napi.GET(\"/hello/:id\", httpHandler.GetHello) // if needed",
+      "impact": "Potential for unintended HTTP method usage and unclear API contract",
+      "reference": "REST API Best Practices"
+    },
+    {
+      "id": "HTTP-002",
+      "category": "HTTP API Route Design",
+      "severity": "CRITICAL",
+      "file": "internal/router/router.go",
+      "description": "No API versioning strategy beyond URL path",
+      "details": "The API uses '/api/v1' prefix which is good, but there's no mechanism to support multiple API versions simultaneously. The codebase has no version negotiation, no Accept-Version header support, and no strategy for deprecating v1 when v2 is introduced.",
+      "recommendation": "Implement one of these strategies:\n1. URL versioning (current approach) + version deprecation headers\n2. Add response headers: X-API-Version, Sunset, Deprecation\n3. Support content negotiation via Accept header: application/vnd.api.v1+json\nExample middleware:\nr.Use(func(c *gin.Context) {\n  c.Header(\"X-API-Version\", \"v1\")\n  c.Next()\n})",
+      "impact": "Difficult to evolve API without breaking existing clients",
+      "reference": "https://restfulapi.net/versioning/"
+    },
+    {
+      "id": "HTTP-003",
+      "category": "Request/Response Format Consistency",
+      "severity": "MEDIUM",
+      "file": "internal/handler/hello_http.go",
+      "description": "Inconsistent error response structure between validation errors and service errors",
+      "details": "Validation errors return: {\"code\": 400, \"msg\": \"参数错误: <details>\"}\nService errors return: {\"code\": 500, \"msg\": \"服务调用失败\"}\nSuccess returns: {\"code\": 0, \"msg\": \"success\", \"data\": {...}}\n\nIssues:\n1. Error responses lack a consistent 'data' field (should be null or omitted consistently)\n2. Validation error messages expose internal details (err.Error()) which may leak implementation details\n3. No standardized error code system (using HTTP status codes mixed with custom 'code' field)",
+      "recommendation": "Define a unified response structure:\ntype APIResponse struct {\n  Code    int         `json:\"code\"`\n  Message string      `json:\"message\"`\n  Data    interface{} `json:\"data,omitempty\"`\n  Errors  []ErrorDetail `json:\"errors,omitempty\"` // For validation errors\n}\n\ntype ErrorDetail struct {\n  Field   string `json:\"field\"`\n  Message string `json:\"message\"`\n}",
+      "impact": "Client applications must handle multiple response formats, increasing complexity",
+      "reference": "RFC 7807 Problem Details for HTTP APIs"
+    },
+    {
+      "id": "HTTP-004",
+      "category": "Request/Response Format Consistency",
+      "severity": "HIGH",
+      "file": "internal/handler/hello_http.go",
+      "description": "Response data structure inconsistency between proto definition and HTTP response",
+      "details": "The proto defines SayHelloResponse with field 'message', but the HTTP handler wraps it as:\n{\"code\": 0, \"msg\": \"success\", \"data\": {\"reply\": rsp.GetMessage()}}\n\nThis creates confusion:\n1. Proto field is 'message' but HTTP response uses 'reply'\n2. Double wrapping: outer 'msg' says 'success' while inner 'data.reply' contains actual message\n3. No clear mapping documentation between gRPC and HTTP representations",
+      "recommendation": "Either:\n1. Keep consistency: use 'message' in both places\n{\"code\": 0, \"msg\": \"success\", \"data\": {\"message\": rsp.GetMessage()}}\n2. Or flatten the response:\n{\"code\": 0, \"message\": rsp.GetMessage()}\nDocument the transformation rules clearly.",
+      "impact": "API consumers confused about which field contains the actual response data",
+      "reference": "API Design Consistency Principles"
+    },
+    {
+      "id": "VALIDATION-001",
+      "category": "Parameter Validation",
+      "severity": "HIGH",
+      "file": "internal/handler/hello_http.go",
+      "description": "Insufficient input validation on SayHelloRequest",
+      "details": "Current validation: binding:\"required,min=1,max=100\"\nMissing validations:\n1. No sanitization of special characters or injection attacks\n2. No Unicode/encoding validation (could accept malformed UTF-8)\n3. No rate limiting on the endpoint\n4. Validation error message exposes internal validator details: '参数错误: ' + err.Error()",
+      "recommendation": "Enhanced validation:\ntype SayHelloRequest struct {\n  Name string `json:\"name\" binding:\"required,min=1,max=100,alphanumunicode\"`\n}\n\n// Add sanitization\nfunc sanitizeInput(input string) string {\n  // Remove potentially dangerous characters\n  return strings.TrimSpace(input)\n}\n\n// Return generic error messages\nif err := c.ShouldBindJSON(&req); err != nil {\n  c.JSON(http.StatusBadRequest, gin.H{\n    \"code\": 400,\n    \"msg\":  \"请求参数无效\",\n  })\n  return\n}",
+      "impact": "Potential for injection attacks and information leakage through error messages",
+      "reference": "OWASP Input Validation Cheat Sheet"
+    },
+    {
+      "id": "VALIDATION-002",
+      "category": "Parameter Validation",
+      "severity": "CRITICAL",
+      "file": "api/requirement/v1/requirement.proto",
+      "description": "No server-side validation defined in proto contracts for RequirementService",
+      "details": "The requirement.proto defines many RPC methods but has no validation annotations or constraints:\n1. CreateRequirementRequest: No length limits on title/description\n2. Priority field accepts any string (should be enum: high/medium/low)\n3. Status field accepts any string (should be enum: backlog/in_progress/done/cancelled)\n4. No validation on page/page_size bounds (could cause DoS with page_size=1000000)\n5. UploadDocumentRequest: No file size limit on file_content bytes field",
+      "recommendation": "Option 1: Use proto validation extensions (protoc-gen-validate):\nimport \"validate/validate.proto\";\nmessage CreateRequirementRequest {\n  string title = 1 [(validate.rules).string = {min_len: 1, max_len: 200}];\n  string priority = 3 [(validate.rules).string = {in: [\"high\", \"medium\", \"low\"]}];\n}\n\nOption 2: Define enums instead of strings:\nenum Priority {\n  PRIORITY_UNSPECIFIED = 0;\n  PRIORITY_HIGH = 1;\n  PRIORITY_MEDIUM = 2;\n  PRIORITY_LOW = 3;\n}",
+      "impact": "Unvalidated inputs can cause database issues, resource exhaustion, or inconsistent state",
+      "reference": "https://github.com/bufbuild/protoc-gen-validate"
+    },
+    {
+      "id": "ERROR-001",
+      "category": "Error Code Standards",
+      "severity": "CRITICAL",
+      "file": "internal/handler/hello_http.go, internal/middleware/recovery.go",
+      "description": "No standardized error code system across the application",
+      "details": "Current error codes are inconsistent:\n1. Success: code=0\n2. Validation error: code=400 (matches HTTP status)\n3. Internal error: code=500 (matches HTTP status)\n4. Recovery panic: code=500\n\nProblems:\n- Mixing HTTP status codes with business logic codes\n- No error code registry or documentation\n- No machine-readable error categorization\n- Clients cannot distinguish between different error types programmatically\n- No correlation ID for error tracking",
+      "recommendation": "Define a structured error code system:\n// Error code ranges:\n// 0: Success\n// 1000-1999: Client errors (validation, authentication)\n// 2000-2999: Business logic errors\n// 3000-3999: System errors\n// 4000-4999: Third-party service errors\n\ntype ErrorResponse struct {\n  Code        int       `json:\"code\"`\n  Message     string    `json:\"message\"`\n  Details     string    `json:\"details,omitempty\"`\n  RequestID   string    `json:\"request_id\"` // For tracing\n  Timestamp   time.Time `json:\"timestamp\"`\n}\n\nconst (\n  ErrCodeSuccess           = 0\n  ErrCodeInvalidParam      = 1001\n  ErrCodeNotFound          = 1002\n  ErrCodeBusinessRule      = 2001\n  ErrCodeInternalError     = 3001\n  ErrCodeServiceUnavailable = 4001\n)",
+      "impact": "Debugging and client error handling is extremely difficult without standardized error codes",
+      "reference": "Google Cloud API Design Guide - Error Handling"
+    },
+    {
+      "id": "ERROR-002",
+      "category": "Error Code Standards",
+      "severity": "HIGH",
+      "file": "internal/handler/hello_http.go",
+      "description": "Error messages expose internal implementation details",
+      "details": "Line 33: \"msg\": \"参数错误: \" + err.Error()\nThis exposes:\n1. Internal validation library details (gin binding errors)\n2. Field names and validation rules\n3. Potentially sensitive information about system architecture",
+      "recommendation": "Use user-friendly error messages:\nif err := c.ShouldBindJSON(&req); err != nil {\n  zap.L().Warn(\"参数验证失败\", zap.Error(err)) // Log detailed error internally\n  c.JSON(http.StatusBadRequest, gin.H{\n    \"code\": 1001,\n    \"msg\":  \"请求参数格式不正确，请检查输入\",\n  })\n  return\n}",
+      "impact": "Information disclosure vulnerability; helps attackers understand system internals",
+      "reference": "OWASP Secure Coding Practices"
+    },
+    {
+      "id": "WEBSOCKET-001",
+      "category": "WebSocket Protocol Design",
+      "severity": "CRITICAL",
+      "file": "internal/handler/hello_ws.go",
+      "description": "WebSocket connection lacks heartbeat/ping-pong mechanism",
+      "details": "The WebSocket handler does not implement:\n1. Ping/Pong frames for connection health monitoring\n2. Read/write timeouts (connections can hang indefinitely)\n3. Maximum message size limits (potential memory exhaustion)\n4. Connection idle timeout\n\nCurrent code sets buffer sizes but no timeouts:\nvar wsUpgrader = websocket.Upgrader{\n  ReadBufferSize:  4096,\n  WriteBufferSize: 4096,\n  CheckOrigin:     func(r *http.Request) bool { return true },\n}",
+      "recommendation": "Add connection management:\nvar wsUpgrader = websocket.Upgrader{\n  ReadBufferSize:   4096,\n  WriteBufferSize:  4096,\n  HandshakeTimeout: 10 * time.Second,\n  CheckOrigin:      validateOrigin, // Don't allow all origins in production\n}\n\n// In ChatStream handler:\nconn.SetReadDeadline(time.Now().Add(60 * time.Second))\nconn.SetPongHandler(func(string) error {\n  conn.SetReadDeadline(time.Now().Add(60 * time.Second))\n  return nil\n})\n\n// Start ping ticker\ngo func() {\n  ticker := time.NewTicker(30 * time.Second)\n  defer ticker.Stop()\n  for range ticker.C {\n    if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {\n      return\n    }\n  }\n}()",
+      "impact": "Zombie connections consume resources indefinitely; vulnerable to slowloris attacks",
+      "reference": "RFC 6455 - The WebSocket Protocol"
+    },
+    {
+      "id": "WEBSOCKET-002",
+      "category": "WebSocket Protocol Design",
+      "severity": "HIGH",
+      "file": "internal/handler/hello_ws.go",
+      "description": "No message type discrimination in WebSocket protocol",
+      "details": "The WSChatMessage structure only supports text messages:\ntype WSChatMessage struct {\n  User      string `json:\"user\"`\n  Text      string `json:\"text\"`\n  Timestamp int64  `json:\"timestamp\"`\n}\n\nThere's no way to distinguish:\n1. Regular chat messages vs control messages (typing indicators, read receipts)\n2. System notifications vs user messages\n3. Error messages from server\n4. Heartbeat/keepalive messages",
+      "recommendation": "Add message type field:\ntype WSMessageType string\nconst (\n  MsgTypeChat      WSMessageType = \"chat\"\n  MsgTypeSystem    WSMessageType = \"system\"\n  MsgTypeError     WSMessageType = \"error\"\n  MsgTypePing      WSMessageType = \"ping\"\n  MsgTypePong      WSMessageType = \"pong\"\n  MsgTypeTyping    WSMessageType = \"typing\"\n)\n\ntype WSChatMessage struct {\n  Type      WSMessageType `json:\"type\"`\n  User      string        `json:\"user,omitempty\"`\n  Text      string        `json:\"text,omitempty\"`\n  Payload   interface{}   `json:\"payload,omitempty\"` // For extended data\n  Timestamp int64         `json:\"timestamp\"`\n  ID        string        `json:\"id,omitempty\"`      // For message tracking\n}",
+      "impact": "Limited extensibility; cannot add new message types without breaking protocol",
+      "reference": "WebSocket Best Practices"
+    },
+    {
+      "id": "WEBSOCKET-003",
+      "category": "WebSocket Protocol Design",
+      "severity": "HIGH",
+      "file": "internal/handler/hello_ws.go",
+      "description": "WebSocket origin validation disabled (security risk)",
+      "details": "Line 21: CheckOrigin: func(r *http.Request) bool { return true }\nThis allows any website to establish WebSocket connections, enabling:\n1. Cross-Site WebSocket Hijacking (CSWSH)\n2. Unauthorized access from malicious sites\n3. CSRF-like attacks via WebSocket",
+      "recommendation": "Implement proper origin validation:\nfunc validateOrigin(r *http.Request) bool {\n  origin := r.Header.Get(\"Origin\")\n  if origin == \"\" {\n    return false // Reject non-browser requests or handle specially\n  }\n  \n  allowedOrigins := []string{\n    \"https://yourdomain.com\",\n    \"https://app.yourdomain.com\",\n  }\n  \n  for _, allowed := range allowedOrigins {\n    if origin == allowed {\n      return true\n    }\n  }\n  return false\n}",
+      "impact": "Critical security vulnerability allowing cross-origin WebSocket hijacking",
+      "reference": "OWASP WebSocket Security Cheat Sheet"
+    },
+    {
+      "id": "WEBSOCKET-004",
+      "category": "WebSocket Protocol Design",
+      "severity": "MEDIUM",
+      "file": "internal/handler/hello_ws.go",
+      "description": "No graceful shutdown or connection cleanup strategy",
+      "details": "The handler closes connections abruptly:\n1. No close frame sent before closing (line 49: defer conn.Close())\n2. No notification to client about why connection is closing\n3. Goroutine leak potential if recvDone channel is never closed due to panic\n4. No maximum connection limit per user/IP",
+      "recommendation": "Implement graceful shutdown:\n// Send close frame with reason\nconn.WriteControl(websocket.CloseMessage, \n  websocket.FormatCloseMessage(websocket.CloseNormalClosure, \"Server shutting down\"),\n  time.Now().Add(time.Second))\nconn.Close()\n\n// Add connection tracking\ntype ConnectionManager struct {\n  connections map[string]*websocket.Conn\n  mu          sync.RWMutex\n}\n\n// Limit connections per user\nif manager.CountUserConnections(userID) > MAX_CONNECTIONS_PER_USER {\n  conn.WriteJSON(map[string]interface{}{\n    \"type\": \"error\",\n    \"message\": \"Too many connections\",\n  })\n  conn.Close()\n  return\n}",
+      "impact": "Resource leaks and poor user experience during disconnections",
+      "reference": "Gorilla WebSocket Documentation"
+    },
+    {
+      "id": "VERSIONING-001",
+      "category": "Version Control Strategy",
+      "severity": "HIGH",
+      "file": "cmd/server/main.go, proto/hello/v1/hello.proto",
+      "description": "Hardcoded version string without centralized version management",
+      "details": "Line 97 in main.go: Version: \"1.0.0\"\nThe version is hardcoded in the HealthCheck implementation. There's:\n1. No build-time version injection (via ldflags)\n2. No semantic versioning enforcement\n3. No version compatibility matrix documented\n4. Proto package uses 'v1' but no mechanism to track proto schema versions",
+      "recommendation": "Use build-time version injection:\n// In Makefile or build script:\ngo build -ldflags \"-X main.Version=${VERSION} -X main.GitCommit=${COMMIT}\"\n\n// In code:\nvar (\n  Version   = \"dev\"\n  GitCommit = \"unknown\"\n  BuildTime = \"unknown\"\n)\n\n// HealthCheck response:\nresp.Version = fmt.Sprintf(\"%s (%s)\", Version, GitCommit)",
+      "impact": "Difficult to track deployed versions and debug version-specific issues",
+      "reference": "Semantic Versioning 2.0.0"
+    },
+    {
+      "id": "VERSIONING-002",
+      "category": "Version Control Strategy",
+      "severity": "MEDIUM",
+      "file": "internal/router/router.go",
+      "description": "No API deprecation mechanism or sunset policy",
+      "details": "The /api/v1 route group exists but there's:\n1. No Sunset header to indicate when v1 will be deprecated\n2. No Deprecation header on endpoints\n3. No migration guide or version upgrade path documented\n4. No feature flags to enable/disable API versions",
+      "recommendation": "Add deprecation headers:\nr.Use(func(c *gin.Context) {\n  if strings.HasPrefix(c.Request.URL.Path, \"/api/v1\") {\n    c.Header(\"Sunset\", \"2027-06-16T00:00:00Z\") // One year from now\n    c.Header(\"Deprecation\", \"true\")\n    c.Header(\"Link\", \"</api/v2>; rel=\\\"successor-version\\\"\")\n  }\n  c.Next()\n})",
+      "impact": "Clients have no advance notice of API changes, leading to sudden breakages",
+      "reference": "RFC 8594 - The Sunset HTTP Header"
+    },
+    {
+      "id": "CONSISTENCY-001",
+      "category": "Request/Response Format Consistency",
+      "severity": "MEDIUM",
+      "file": "internal/handler/hello_http.go, internal/middleware/recovery.go, internal/router/router.go",
+      "description": "Inconsistent response envelope structure across endpoints",
+      "details": "Different endpoints return different structures:\n1. /health: {\"code\": 0, \"msg\": \"ok\"} (no 'data' field)\n2. /api/v1/hello success: {\"code\": 0, \"msg\": \"success\", \"data\": {...}}\n3. /api/v1/hello error: {\"code\": 400, \"msg\": \"...\"} (no 'data' field)\n4. Recovery panic: {\"code\": 500, \"msg\": \"内部服务错误\"} (no 'data' field)\n\nInconsistencies:\n- Sometimes 'msg' is present, sometimes not\n- 'data' field appears inconsistently\n- Error responses don't follow same structure as success",
+      "recommendation": "Standardize all responses:\ntype Response struct {\n  Code    int         `json:\"code\"`\n  Message string      `json:\"message\"`\n  Data    interface{} `json:\"data,omitempty\"`\n  Meta    *Meta       `json:\"meta,omitempty\"` // Pagination, etc.\n}\n\n// Always use this structure, even for errors\n// Success: {\"code\": 0, \"message\": \"success\", \"data\": {...}}\n// Error: {\"code\": 1001, \"message\": \"Invalid parameter\", \"data\": null}",
+      "impact": "Client SDK generation and error handling becomes complex",
+      "reference": "JSON API Specification"
+    },
+    {
+      "id": "CONSISTENCY-002",
+      "category": "Request/Response Format Consistency",
+      "severity": "LOW",
+      "file": "api/requirement/v1/requirement.proto",
+      "description": "Timestamp field naming inconsistency",
+      "details": "Proto messages use google.protobuf.Timestamp:\n- created_at (snake_case)\n- updated_at (snake_case)\n- completed_at (snake_case)\n- uploaded_at (snake_case)\n\nHowever, ChatMessage in hello.proto uses:\n- timestamp (int64 Unix timestamp)\n\nThis creates inconsistency in how time is represented across services.",
+      "recommendation": "Standardize timestamp representation:\nOption 1: Use google.protobuf.Timestamp everywhere (recommended for gRPC)\nOption 2: Use int64 Unix timestamps everywhere (simpler for JSON/HTTP)\n\nIf using protobuf.Timestamp, ensure proper JSON serialization:\n// Generated code will serialize as RFC 3339 string: \"2026-06-16T10:30:00Z\"",
+      "impact": "Confusion for API consumers handling time values across different endpoints",
+      "reference": "Protocol Buffers Well-Known Types"
+    },
+    {
+      "id": "DOCUMENTATION-001",
+      "category": "API Documentation",
+      "severity": "HIGH",
+      "file": "All proto files",
+      "description": "No OpenAPI/Swagger annotations or API documentation generation",
+      "details": "The proto files have basic comments but:\n1. No protoc-gen-openapiv2/genopenapi annotations for HTTP mapping\n2. No generated OpenAPI specification for REST endpoints\n3. No API documentation portal or README\n4. No request/response examples documented\n5. No API changelog",
+      "recommendation": "Add OpenAPI generation:\n1. Install protoc-gen-openapiv2\n2. Add annotations to proto files:\nimport \"google/api/annotations.proto\";\nservice HelloService {\n  rpc SayHello(SayHelloRequest) returns (SayHelloResponse) {\n    option (google.api.http) = {\n      post: \"/api/v1/hello\"\n      body: \"*\"\n    };\n  }\n}\n3. Generate OpenAPI spec: protoc --openapiv2_out=. proto/**/*.proto\n4. Serve Swagger UI for interactive documentation",
+      "impact": "Poor developer experience; difficult for external teams to integrate",
+      "reference": "gRPC-Gateway OpenAPI Integration"
+    },
+    {
+      "id": "SECURITY-001",
+      "category": "Security - Authentication & Authorization",
+      "severity": "CRITICAL",
+      "file": "internal/router/router.go, internal/handler/*.go",
+      "description": "No authentication or authorization middleware implemented",
+      "details": "All endpoints are publicly accessible:\n1. /api/v1/hello - No auth required\n2. /ws/chat - No auth required\n3. /health - Exposes internal service status without auth\n4. RequirementService endpoints (when implemented) will have no auth\n\nAdditionally, CORS allows all origins: Access-Control-Allow-Origin: *",
+      "recommendation": "Implement authentication:\n1. Add JWT/OAuth2 middleware:\nr.Use(middleware.Auth())\n\n2. Protect sensitive endpoints:\npublic := r.Group(\"/api/v1\")\npublic.GET(\"/health\", healthHandler)\n\nprotected := r.Group(\"/api/v1\")\nprotected.Use(middleware.Auth(), middleware.RequireRole(\"user\"))\nprotected.POST(\"/hello\", httpHandler.SayHello)\n\n3. Restrict CORS in production:\nc.Header(\"Access-Control-Allow-Origin\", cfg.AllowedOrigin)\nc.Header(\"Access-Control-Allow-Credentials\", \"true\")",
+      "impact": "Complete lack of access control; any client can invoke all services",
+      "reference": "OWASP API Security Top 10 - Broken Object Level Authorization"
+    },
+    {
+      "id": "SECURITY-002",
+      "category": "Security - Input Sanitization",
+      "severity": "MEDIUM",
+      "file": "internal/handler/hello_http.go",
+      "description": "User input passed directly to backend without sanitization",
+      "details": "Line 38: rsp, err := h.client.SayHello(c.Request.Context(), req.Name)\nThe 'name' parameter is passed directly to gRPC without:\n1. HTML/entity encoding (XSS risk if reflected in UI)\n2. SQL/NoSQL injection protection (though using MongoDB, still risky)\n3. Length validation beyond basic min/max\n4. Character whitelist validation",
+      "recommendation": "Sanitize input before processing:\nimport \"html\"\n\nfunc sanitizeName(name string) string {\n  // Trim whitespace\n  name = strings.TrimSpace(name)\n  // Escape HTML entities\n  name = html.EscapeString(name)\n  // Remove control characters\n  name = strings.Map(func(r rune) rune {\n    if unicode.IsControl(r) && r != '\\n' && r != '\\t' {\n      return -1\n    }\n    return r\n  }, name)\n  return name\n}\n\nreq.Name = sanitizeName(req.Name)",
+      "impact": "Potential for injection attacks and XSS if data is rendered in web UIs",
+      "reference": "OWASP Injection Prevention Cheat Sheet"
+    },
+    {
+      "id": "PERFORMANCE-001",
+      "category": "Performance - Resource Management",
+      "severity": "MEDIUM",
+      "file": "internal/handler/hello_ws.go",
+      "description": "WebSocket handler lacks message rate limiting",
+      "details": "The ChatStream handler processes messages as fast as they arrive:\n1. No rate limiting per connection\n2. No backpressure mechanism\n3. No maximum message queue size\n4. Could be exploited for DoS by flooding messages",
+      "recommendation": "Implement rate limiting:\ntype RateLimiter struct {\n  tokens   chan struct{}\n  interval time.Duration\n}\n\nfunc NewRateLimiter(maxPerSecond int) *RateLimiter {\n  rl := &RateLimiter{\n    tokens:   make(chan struct{}, maxPerSecond),\n    interval: time.Second / time.Duration(maxPerSecond),\n  }\n  go func() {\n    ticker := time.NewTicker(rl.interval)\n    defer ticker.Stop()\n    for range ticker.C {\n      select {\n      case rl.tokens <- struct{}{}:\n      default:\n      }\n    }\n  }()\n  return rl\n}\n\n// In handler:\nselect {\ncase <-rateLimiter.tokens:\n  // Process message\ndefault:\n  conn.WriteJSON(map[string]interface{}{\n    \"type\": \"error\",\n    \"message\": \"Rate limit exceeded\",\n  })\n}",
+      "impact": "Vulnerable to message flood attacks causing resource exhaustion",
+      "reference": "Token Bucket Algorithm"
+    },
+    {
+      "id": "OBSERVABILITY-001",
+      "category": "Observability - Logging & Tracing",
+      "severity": "MEDIUM",
+      "file": "internal/middleware/logging.go",
+      "description": "Request logging lacks correlation IDs and structured context",
+      "details": "The Logger middleware logs basic info but missing:\n1. No request/correlation ID for distributed tracing\n2. No user ID in logs (even if authenticated later)\n3. No request body logging for debugging (with size limits)\n4. No log level differentiation based on status code\n5. Sensitive query param sanitization is good but incomplete",
+      "recommendation": "Enhance logging with correlation IDs:\nimport \"github.com/google/uuid\"\n\nfunc Logger() gin.HandlerFunc {\n  return func(c *gin.Context) {\n    // Generate or extract correlation ID\n    correlationID := c.GetHeader(\"X-Correlation-ID\")\n    if correlationID == \"\" {\n      correlationID = uuid.New().String()\n    }\n    c.Header(\"X-Correlation-ID\", correlationID)\n    \n    // Add to context for downstream use\n    ctx := context.WithValue(c.Request.Context(), \"correlation_id\", correlationID)\n    c.Request = c.Request.WithContext(ctx)\n    \n    start := time.Now()\n    c.Next()\n    latency := time.Since(start)\n    \n    // Log with correlation ID\n    logger := zap.L().With(zap.String(\"correlation_id\", correlationID))\n    if c.Writer.Status() >= 500 {\n      logger.Error(\"请求失败\",\n        zap.String(\"method\", c.Request.Method),\n        zap.String(\"path\", c.Request.URL.Path),\n        zap.Int(\"status\", c.Writer.Status()),\n        zap.Duration(\"latency\", latency),\n      )\n    } else {\n      logger.Info(\"请求日志\",\n        zap.String(\"method\", c.Request.Method),\n        zap.String(\"path\", c.Request.URL.Path),\n        zap.Int(\"status\", c.Writer.Status()),\n        zap.Duration(\"latency\", latency),\n      )\n    }\n  }\n}",
+      "impact": "Difficult to trace requests across services and debug production issues",
+      "reference": "Distributed Tracing Best Practices"
+    },
+    {
+      "id": "COMPATIBILITY-001",
+      "category": "Backward Compatibility",
+      "severity": "HIGH",
+      "file": "api/requirement/v1/requirement.proto",
+      "description": "Use of optional fields without proper default value handling",
+      "details": "Several messages use 'optional' keyword:\n- Requirement.completed_at (line 57)\n- UpdateRequirementRequest.title (line 127)\n- UpdateRequirementRequest.description (line 128)\n- ListRequirementsRequest.status (line 151)\n- FindSimilarExperiencesRequest.category (line 241)\n- GetExperienceStatsRequest.category (line 248)\n\nIssues:\n1. Proto3 'optional' requires proto3 syntax with explicit presence tracking\n2. No documentation on what happens when optional fields are absent\n3. Clients may not know whether to send empty string or omit field entirely\n4. Server behavior undefined when optional fields are missing",
+      "recommendation": "Document optional field semantics clearly:\n// In proto comments:\nmessage UpdateRequirementRequest {\n  string id = 1;\n  // If present, updates the title. Omit to keep unchanged.\n  optional string title = 2;\n  // If present, updates the description. Omit to keep unchanged.\n  optional string description = 3;\n}\n\nOr use FieldMask for partial updates:\nimport \"google/protobuf/field_mask.proto\";\nmessage UpdateRequirementRequest {\n  Requirement requirement = 1;\n  google.protobuf.FieldMask update_mask = 2; // Specifies which fields to update\n}",
+      "impact": "Ambiguous API contract leads to integration bugs and unexpected behavior",
+      "reference": "Protocol Buffers Language Guide - Optional Fields"
+    },
+    {
+      "id": "COMPATIBILITY-002",
+      "category": "Backward Compatibility",
+      "severity": "MEDIUM",
+      "file": "api/requirement/v1/requirement.proto",
+      "description": "Repeated fields without cardinality constraints",
+      "details": "Many repeated fields have no documented limits:\n- Requirement.related_ids (line 50): Could grow unbounded\n- Requirement.tags (line 51): No max count\n- Requirement.generated_files (line 52): No max count\n- Requirement.experiences (line 53): No max count\n- Experience.tags (line 72): No max count\n- Experience.technologies (line 82): No max count\n\nThis can cause:\n1. Large message sizes exceeding gRPC default limits (4MB)\n2. Performance degradation with large arrays\n3. Database storage issues",
+      "recommendation": "Document and enforce limits:\n// In proto comments:\nmessage Requirement {\n  // Related requirement IDs. Maximum 50 items.\n  repeated string related_ids = 6;\n  // Tags for categorization. Maximum 20 tags, each max 50 chars.\n  repeated string tags = 7;\n}\n\n// Validate in service layer:\nif len(req.Tags) > 20 {\n  return nil, status.Errorf(codes.InvalidArgument, \"too many tags: max 20\")\n}",
+      "impact": "Potential for oversized messages and performance issues",
+      "reference": "gRPC Message Size Limits"
+    },
+    {
+      "id": "DESIGN-001",
+      "category": "API Design - Naming Conventions",
+      "severity": "LOW",
+      "file": "api/requirement/v1/requirement.proto",
+      "description": "Inconsistent enum value naming patterns",
+      "details": "Proto file uses string enums instead of proper proto enums:\n- priority: \"high/medium/low\" (string)\n- status: \"backlog/in_progress/done/cancelled\" (string)\n- type: \"problem_solution / best_practice / pitfall\" (string)\n- category: \"database / api / security / performance\" (string)\n\nShould use proto enum types for type safety:",
+      "recommendation": "Replace string fields with enums:\nenum Priority {\n  PRIORITY_UNSPECIFIED = 0;\n  PRIORITY_HIGH = 1;\n  PRIORITY_MEDIUM = 2;\n  PRIORITY_LOW = 3;\n}\n\nenum RequirementStatus {\n  STATUS_UNSPECIFIED = 0;\n  STATUS_BACKLOG = 1;\n  STATUS_IN_PROGRESS = 2;\n  STATUS_DONE = 3;\n  STATUS_CANCELLED = 4;\n}\n\nenum ExperienceType {\n  EXPERIENCE_TYPE_UNSPECIFIED = 0;\n  EXPERIENCE_TYPE_PROBLEM_SOLUTION = 1;\n  EXPERIENCE_TYPE_BEST_PRACTICE = 2;\n  EXPERIENCE_TYPE_PITFALL = 3;\n  EXPERIENCE_TYPE_PATTERN = 4;\n}\n\nmessage Requirement {\n  Priority priority = 4;\n  RequirementStatus status = 5;\n}",
+      "impact": "Loss of type safety; clients can send invalid values; harder to validate",
+      "reference": "Protocol Buffers Enums"
+    },
+    {
+      "id": "DESIGN-002",
+      "category": "API Design - Pagination",
+      "severity": "MEDIUM",
+      "file": "api/requirement/v1/requirement.proto",
+      "description": "Basic pagination without cursor-based alternative for large datasets",
+      "details": "ListRequirementsRequest and ListExperiencesRequest use offset-based pagination:\nmessage ListRequirementsRequest {\n  int32 page = 1;\n  int32 page_size = 2;\n  ...\n}\n\nIssues:\n1. No max page_size limit (could request 1 million items)\n2. No default page_size (what if client omits it?)\n3. Offset pagination performs poorly on large tables\n4. No next_page_token for cursor-based pagination\n5. No total_pages or has_more indicator in response",
+      "recommendation": "Improve pagination:\nmessage ListRequirementsRequest {\n  int32 page_size = 1 [(validate.rules).int32 = {gte: 1, lte: 100}]; // Max 100\n  string page_token = 2; // Cursor for next page (empty for first page)\n  optional string status = 3;\n  optional string priority = 4;\n  repeated string tags = 5;\n}\n\nmessage ListRequirementsResponse {\n  repeated Requirement requirements = 1;\n  string next_page_token = 2; // Empty if no more pages\n  int64 total_count = 3; // Total items (expensive to calculate, make optional)\n}",
+      "impact": "Poor performance on large datasets; potential for DoS via large page requests",
+      "reference": "Google Cloud API Design - Pagination"
+    }
+  ],
+  "summary": {
+    "total_findings": 28,
+    "by_severity": {
+      "CRITICAL": 6,
+      "HIGH": 10,
+      "MEDIUM": 9,
+      "LOW": 3
+    },
+    "by_category": {
+      "gRPC Protocol Definition": 3,
+      "HTTP API Route Design": 2,
+      "Request/Response Format Consistency": 3,
+      "Parameter Validation": 2,
+      "Error Code Standards": 2,
+      "WebSocket Protocol Design": 4,
+      "Version Control Strategy": 2,
+      "API Documentation": 1,
+      "Security": 2,
+      "Performance": 1,
+      "Observability": 1,
+      "Backward Compatibility": 2,
+      "API Design": 2
+    },
+    "critical_issues": [
+      "HTTP-002: No API versioning strategy beyond URL path",
+      "VALIDATION-002: No server-side validation in requirement.proto",
+      "ERROR-001: No standardized error code system",
+      "WEBSOCKET-001: No WebSocket heartbeat/ping-pong mechanism",
+      "WEBSOCKET-003: WebSocket origin validation disabled (security risk)",
+      "SECURITY-001: No authentication or authorization middleware"
+    ],
+    "recommendations_priority": [
+      "1. Implement authentication and authorization (SECURITY-001)",
+      "2. Fix WebSocket security issues (WEBSOCKET-003, WEBSOCKET-001)",
+      "3. Establish standardized error code system (ERROR-001)",
+      "4. Add input validation to all proto messages (VALIDATION-002)",
+      "5. Implement API versioning headers and deprecation strategy (HTTP-002, VERSIONING-002)",
+      "6. Standardize response envelope structure (CONSISTENCY-001)",
+      "7. Add OpenAPI documentation generation (DOCUMENTATION-001)",
+      "8. Replace string enums with proto enums (DESIGN-001)"
+    ]
+  }
+}
